@@ -16,6 +16,10 @@ Imágenes con nombre reservado (no cuentan como defecto) se colocan en las
 etiquetas {{ img_<nombre> }} de la plantilla, p. ej. "portada.jpg" ->
 {{ img_portada }}, "ubicacion.png" -> {{ img_ubicacion }}.
 
+Tras generar la primera versión se abre un ciclo de revisión (ver revision.py):
+se introducen cambios, se genera v2, v3... hasta marcar la versión definitiva,
+cuyo formato queda guardado como nueva plantilla de informe.
+
 Uso:
     python generar_informe.py                      (modo interactivo)
     python generar_informe.py -i ./fotos -p plantilla.docx -o informe.docx
@@ -23,6 +27,7 @@ Uso:
 import argparse
 import csv
 import json
+import shutil
 import sys
 import tempfile
 import unicodedata
@@ -35,7 +40,8 @@ from docx.shared import Mm
 from PIL import Image, ImageOps
 
 BASE = Path(__file__).parent
-PLANTILLA_POR_DEFECTO = BASE / "plantillas" / "plantilla_inspeccion.docx"
+PLANTILLA_BASE = BASE / "plantillas" / "plantilla_inspeccion.docx"
+CONFIG = BASE / "config.json"
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".gif", ".webp"}
 ANCHO_FOTO_MM = 150
 LADO_MAX_PX = 1600  # se reducen las fotos para que el .docx no pese demasiado
@@ -87,15 +93,44 @@ def _clave(texto: str) -> str:
     return " ".join(_sin_tildes(texto).lower().replace("_", " ").replace("-", " ").split())
 
 
+# Los nombres oficiales también se reconocen a sí mismos
+_NOMBRES_OFICIALES = {_clave(v): v for v in CATALOGO_DEFECTOS.values()}
+
+
 def normalizar_defecto(texto: str) -> str:
     clave = _clave(texto)
     if not clave:
         return "Sin clasificar"
-    return CATALOGO_DEFECTOS.get(clave, clave.capitalize())
+    if clave in CATALOGO_DEFECTOS:
+        return CATALOGO_DEFECTOS[clave]
+    if clave in _NOMBRES_OFICIALES:
+        return _NOMBRES_OFICIALES[clave]
+    return " ".join(texto.replace("_", " ").split()).lower().capitalize()
 
 
 def normalizar_severidad(texto: str) -> str:
     return ALIAS_SEVERIDAD.get(_clave(texto or ""), (texto or "").strip().capitalize() or "Sin especificar")
+
+
+def leer_config() -> dict:
+    try:
+        return json.loads(CONFIG.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def guardar_config(config: dict):
+    CONFIG.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def plantilla_por_defecto() -> Path:
+    """Plantilla configurada en config.json (última definitiva elegida) o la base."""
+    ruta = leer_config().get("plantilla_por_defecto")
+    if ruta:
+        ruta = Path(ruta) if Path(ruta).is_absolute() else BASE / ruta
+        if ruta.exists():
+            return ruta
+    return PLANTILLA_BASE
 
 
 def preguntar(mensaje: str, defecto: str = "") -> str:
@@ -142,7 +177,11 @@ def leer_csv(carpeta: Path) -> dict:
 
 
 def clasificar_imagenes(carpeta: Path, variables_img: set):
-    """Devuelve (lista_defectos, imagenes_fijas)."""
+    """Devuelve (lista_defectos, imagenes_fijas).
+
+    Cada defecto es un dict con: ruta, archivo, tipo, elemento, ubicacion,
+    severidad, observaciones y excluido (True si inspeccion.csv indica incluir=no).
+    """
     datos_csv = leer_csv(carpeta)
     defectos, fijas = [], {}
 
@@ -155,8 +194,9 @@ def clasificar_imagenes(carpeta: Path, variables_img: set):
             fijas[nombre_var] = ruta
             continue
 
-        rel = ruta.relative_to(carpeta)
-        fila = datos_csv.get(ruta.name.lower()) or datos_csv.get(str(rel).lower().replace("\\", "/"))
+        rel = ruta.relative_to(carpeta).as_posix()
+        fila = datos_csv.get(rel.lower()) or datos_csv.get(ruta.name.lower())
+        partes_ruta = rel.split("/")
         partes_nombre = ruta.stem.split("_")
 
         if fila:
@@ -165,10 +205,10 @@ def clasificar_imagenes(carpeta: Path, variables_img: set):
             ubicacion = fila.get("ubicacion", "")
             severidad = fila.get("severidad", "")
             obs = fila.get("observaciones", "")
-        elif len(rel.parts) > 1:  # está dentro de una subcarpeta -> la subcarpeta es el defecto
-            tipo = rel.parts[0]
+        elif len(partes_ruta) > 1:  # está dentro de una subcarpeta -> la subcarpeta es el defecto
+            tipo = partes_ruta[0]
             elemento = " ".join(partes_nombre).replace("-", " ")
-            ubicacion = " / ".join(rel.parts[1:-1])
+            ubicacion = " / ".join(partes_ruta[1:-1])
             severidad = obs = ""
         else:  # defecto_elemento_n.jpg
             tipo = partes_nombre[0]
@@ -178,18 +218,52 @@ def clasificar_imagenes(carpeta: Path, variables_img: set):
 
         defectos.append({
             "ruta": ruta,
-            "archivo": str(rel),
+            "archivo": rel,
             "tipo": normalizar_defecto(tipo),
-            "elemento": elemento or "-",
-            "ubicacion": ubicacion or "-",
+            "elemento": elemento,
+            "ubicacion": ubicacion,
             "severidad": normalizar_severidad(severidad),
-            "observaciones": obs or "-",
+            "observaciones": obs,
+            "excluido": bool(fila) and _clave(fila.get("incluir", "si")) in ("no", "n", "0"),
         })
 
-    defectos.sort(key=lambda d: (d["tipo"], d["archivo"]))
-    for i, d in enumerate(defectos, 1):
-        d["num"] = i
-    return defectos, fijas
+    return numerar(defectos), fijas
+
+
+def numerar(defectos):
+    """Ordena por tipo y archivo y numera los defectos incluidos (los excluidos quedan con num=None)."""
+    defectos.sort(key=lambda d: (d["excluido"], d["tipo"], d["archivo"]))
+    n = 0
+    for d in defectos:
+        if d["excluido"]:
+            d["num"] = None
+        else:
+            n += 1
+            d["num"] = n
+    return defectos
+
+
+def incluidos(defectos):
+    return [d for d in defectos if not d["excluido"]]
+
+
+def guardar_estado(carpeta: Path, defectos, datos_obra: dict):
+    """Guarda la clasificación (inspeccion.csv) y los datos de la obra (datos_obra.json)
+    para que los cambios de revisión se conserven si se vuelve a ejecutar la rutina."""
+    ruta_csv = carpeta / "inspeccion.csv"
+    copia = carpeta / "inspeccion_original.csv"
+    if ruta_csv.exists() and not copia.exists():
+        shutil.copy2(ruta_csv, copia)
+    campos = ["archivo", "defecto", "elemento", "ubicacion", "severidad", "observaciones", "incluir"]
+    with open(ruta_csv, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(campos)
+        for d in sorted(defectos, key=lambda d: d["archivo"]):
+            w.writerow([d["archivo"], d["tipo"], d["elemento"], d["ubicacion"],
+                        "" if d["severidad"] == "Sin especificar" else d["severidad"],
+                        d["observaciones"], "no" if d["excluido"] else "si"])
+    (carpeta / "datos_obra.json").write_text(
+        json.dumps(datos_obra, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -227,31 +301,39 @@ def redactar_conclusiones(resumen, resumen_sev, total):
 
 
 # --------------------------------------------------------------------------- #
-# Programa principal
+# Generación del documento
 # --------------------------------------------------------------------------- #
-def generar_informe(plantilla: Path, carpeta: Path, salida: Path, datos_obra: dict) -> Path:
-    tpl = DocxTemplate(plantilla)
-    variables = tpl.get_undeclared_template_variables()
-    variables_img = {v for v in variables if v.startswith("img_")}
+def variables_imagen(plantilla: Path) -> set:
+    return {v for v in DocxTemplate(plantilla).get_undeclared_template_variables()
+            if v.startswith("img_")}
 
-    defectos, fijas = clasificar_imagenes(carpeta, variables_img)
-    resumen, resumen_sev = construir_resumen(defectos)
-    total = len(defectos)
+
+def renderizar(plantilla: Path, defectos, fijas: dict, datos_obra: dict, salida: Path) -> Path:
+    """Rellena la plantilla con los defectos incluidos y guarda el informe en `salida`."""
+    tpl = DocxTemplate(plantilla)
+    variables_img = {v for v in tpl.get_undeclared_template_variables() if v.startswith("img_")}
+    activos = incluidos(numerar(defectos))
+    resumen, resumen_sev = construir_resumen(activos)
+    total = len(activos)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
-        for d in defectos:
-            d["imagen"] = InlineImage(tpl, str(preparar_imagen(d["ruta"], tmpdir)),
-                                      width=Mm(ANCHO_FOTO_MM))
-            d.pop("ruta")
+        lista = []
+        for d in activos:
+            item = {k: (v or "-") if isinstance(v, str) else v
+                    for k, v in d.items() if k not in ("ruta", "excluido")}
+            item["imagen"] = InlineImage(tpl, str(preparar_imagen(d["ruta"], tmpdir)),
+                                         width=Mm(ANCHO_FOTO_MM))
+            lista.append(item)
 
         contexto = dict(datos_obra)
         contexto.update({
-            "defectos": defectos,
+            "defectos": lista,
             "resumen": resumen,
             "resumen_severidad": resumen_sev,
             "total_defectos": total,
-            "conclusiones": datos_obra.get("conclusiones") or redactar_conclusiones(resumen, resumen_sev, total),
+            "conclusiones": (datos_obra.get("conclusiones") or redactar_conclusiones(resumen, resumen_sev, total))
+            .replace("\n", "\a"),  # cada línea, un párrafo
         })
         for var in variables_img:
             ruta = fijas.get(var)
@@ -261,33 +343,51 @@ def generar_informe(plantilla: Path, carpeta: Path, salida: Path, datos_obra: di
         tpl.render(contexto)
         salida.parent.mkdir(parents=True, exist_ok=True)
         tpl.save(salida)
+    return salida
 
+
+def mostrar_resumen(defectos):
+    activos = incluidos(defectos)
+    resumen, _ = construir_resumen(activos)
     print("\nResumen de defectos")
     print("-" * 45)
     for r in resumen:
         print(f"  {r['tipo']:<32}{r['cantidad']:>5}")
     print("-" * 45)
-    print(f"  {'TOTAL':<32}{total:>5}")
+    print(f"  {'TOTAL':<32}{len(activos):>5}")
+
+
+def generar_informe(plantilla: Path, carpeta: Path, salida: Path, datos_obra: dict) -> Path:
+    """Generación directa en un solo paso (sin ciclo de revisión)."""
+    defectos, fijas = clasificar_imagenes(carpeta, variables_imagen(plantilla))
+    renderizar(plantilla, defectos, fijas, datos_obra, salida)
+    mostrar_resumen(defectos)
     if fijas:
         print(f"\nImágenes fijas colocadas: {', '.join(sorted(fijas))}")
     return salida
 
 
+# --------------------------------------------------------------------------- #
+# Programa principal
+# --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(description="Genera un informe de inspección estructural.")
-    ap.add_argument("-p", "--plantilla", help="Plantilla .docx (por defecto la incluida)")
+    ap.add_argument("-p", "--plantilla", help="Plantilla .docx (por defecto la de config.json o la incluida)")
     ap.add_argument("-i", "--imagenes", help="Carpeta con las fotografías")
-    ap.add_argument("-o", "--salida", help="Ruta del informe .docx a generar")
+    ap.add_argument("-o", "--salida", help="Ruta base del informe .docx a generar")
     ap.add_argument("-d", "--datos", help="JSON con datos de la obra (obra, ubicacion, cliente, inspector, fecha...)")
-    ap.add_argument("--no-preguntar", action="store_true", help="No pedir datos por teclado")
+    ap.add_argument("--no-preguntar", action="store_true",
+                    help="No pedir datos por teclado ni abrir el ciclo de revisión")
+    ap.add_argument("--sin-revision", action="store_true", help="Generar el informe sin ciclo de revisión")
     args = ap.parse_args()
 
     print("=== Generador de informes de inspección estructural ===\n")
 
-    plantilla = Path(args.plantilla or (PLANTILLA_POR_DEFECTO if args.no_preguntar else
-                     preguntar("Ruta de la plantilla del informe", str(PLANTILLA_POR_DEFECTO))))
+    defecto = plantilla_por_defecto()
+    plantilla = Path(args.plantilla or (defecto if args.no_preguntar else
+                     preguntar("Ruta de la plantilla del informe", str(defecto))))
     if not plantilla.exists():
-        if plantilla == PLANTILLA_POR_DEFECTO:
+        if plantilla == PLANTILLA_BASE:
             from crear_plantilla import crear_plantilla
             crear_plantilla(plantilla)
             print(f"  · Plantilla por defecto creada en {plantilla}")
@@ -310,13 +410,18 @@ def main():
     campos = [("obra", "Obra / estructura", carpeta.name), ("ubicacion", "Ubicación", ""),
               ("cliente", "Cliente", ""), ("inspector", "Inspector", ""),
               ("fecha", "Fecha de inspección", date.today().strftime("%d/%m/%Y"))]
-    for clave, texto, defecto in campos:
+    for clave, texto, valor in campos:
         if clave not in datos:
-            datos[clave] = defecto if args.no_preguntar else preguntar(texto, defecto)
+            datos[clave] = valor if args.no_preguntar else preguntar(texto, valor)
 
     salida = Path(args.salida) if args.salida else carpeta / f"Informe_inspeccion_{date.today():%Y%m%d}.docx"
-    salida = generar_informe(plantilla, carpeta, salida, datos)
-    print(f"\nInforme generado: {salida.resolve()}")
+
+    if args.no_preguntar or args.sin_revision:
+        generar_informe(plantilla, carpeta, salida, datos)
+        print(f"\nInforme generado: {salida.resolve()}")
+    else:
+        from revision import CicloRevision
+        CicloRevision(plantilla, carpeta, salida, datos).ejecutar()
 
 
 if __name__ == "__main__":

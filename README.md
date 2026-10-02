@@ -6,6 +6,8 @@ Rutina en Python que:
 2. Pide la **ruta de la carpeta con las fotografías**.
 3. Inserta cada fotografía en su espacio de la plantilla, con su ficha de defecto.
 4. Añade un **resumen final** con el número total de cada tipo de defecto (y por severidad) y unas conclusiones automáticas.
+5. Abre un **ciclo de revisión**: se introducen cambios, se generan nuevas versiones (v1, v2, v3…) hasta marcar
+   una como **definitiva**, cuyo formato se guarda como **nueva plantilla** para próximos informes.
 
 ## Instalación
 
@@ -33,7 +35,48 @@ python generar_informe.py -i "C:\Inspecciones\Puente\fotos" -p plantillas/planti
 | `-i`, `--imagenes` | Carpeta con las fotografías |
 | `-o`, `--salida` | Informe a generar (por defecto `Informe_inspeccion_AAAAMMDD.docx` en la carpeta de fotos) |
 | `-d`, `--datos` | JSON con los datos de la obra |
-| `--no-preguntar` | No pedir nada por teclado (usa valores por defecto) |
+| `--no-preguntar` | No pedir nada por teclado ni abrir el ciclo de revisión |
+| `--sin-revision` | Generar una única versión, sin ciclo de revisión |
+
+## Ciclo de revisión
+
+Tras generar la v1 aparece el menú:
+
+```
+===== Revisión del informe – versión actual: v1 =====
+  1. Ver lista de defectos
+  2. Modificar un defecto (tipo, elemento, ubicación, severidad, observaciones)
+  3. Excluir defectos del informe
+  4. Restaurar defectos excluidos
+  5. Renombrar / fusionar un tipo de defecto
+  6. Modificar datos de la obra
+  7. Redactar conclusiones
+  8. Reemplazar un texto fijo de la plantilla
+  9. Editar formato de la plantilla en Word (logos, estilos, textos...)
+  A. Abrir la última versión generada
+  G. Generar nueva versión con los cambios
+  D. Marcar como DEFINITIVA y guardar como nueva plantilla
+  S. Salir (se puede continuar la revisión más tarde)
+```
+
+- Los cambios se acumulan y se aplican al pulsar **G**, que crea `Informe_..._v2.docx`, `_v3.docx`…
+  Las versiones anteriores se conservan.
+- **Cambios de contenido** (opciones 2 a 7): se guardan en `inspeccion.csv` y `datos_obra.json` de la carpeta
+  de fotos. Si existía un `inspeccion.csv` propio, antes se copia como `inspeccion_original.csv`.
+  Los defectos excluidos quedan con `incluir = no`.
+- **Cambios de formato** (opciones 8 y 9): se hacen sobre una *plantilla de trabajo*
+  (`Informe_..._plantilla_trabajo.docx`), nunca sobre la plantilla original. La opción 9 la abre en Word.
+  Al volver se comprueba que sigue siendo válida y, si no lo es, se restaura. La opción 8 se niega a tocar
+  las etiquetas `{{ ... }}`.
+- **S** guarda el estado. Si vuelve a ejecutar la rutina con la misma carpeta, ofrece continuar la revisión
+  donde se dejó.
+- **D** genera la última versión si hay cambios pendientes y la copia como `Informe_..._DEFINITIVO.docx`.
+  Después guarda la plantilla de trabajo como nueva plantilla (por defecto
+  `plantillas/plantilla_<obra>_<fecha>.docx`) y pregunta si debe usarse **por defecto** en los próximos
+  informes (se anota en `config.json`).
+
+> La nueva plantilla conserva todo el formato y los textos fijos del informe definitivo, pero mantiene las
+> etiquetas `{{ ... }}`, así que en cada informe nuevo se rellena con las fotos y los datos de esa inspección.
 
 ## Cómo se clasifica cada imagen
 
