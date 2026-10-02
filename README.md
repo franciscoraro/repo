@@ -1,4 +1,34 @@
-# Generador de informes de inspección estructural
+# Informes de inspección – aplicación web con Claude
+
+Aplicación web (`webapp/`) para crear informes de inspección con Claude. Dos opciones al entrar:
+
+- **Crear nuevo informe**: pide *nombre*, *archivo plantilla* (.docx recomendado; también .pdf/.txt/.md),
+  *qué debe hacer el informe* y la *carpeta de fotos* (subcarpetas incluidas). Claude redacta el informe
+  siguiendo la estructura de la plantilla y analizando las fotos, que se insertan todas (las que Claude no
+  coloque van a un «Anexo fotográfico»).
+- **Utilizar existente**: elige un informe ya aprobado, se suben nuevas fotos y Claude genera uno nuevo con
+  el mismo formato y estilo.
+
+Tras generar, se muestra una vista previa y se pregunta si es correcto: se puede **pedir modificaciones**
+(se crea v2, v3… conservando el historial) tantas veces como haga falta. Al pulsar **Aprobar**, el informe
+queda guardado como plantilla y aparece en «Utilizar existente». Cada versión se descarga como Word (.docx),
+construido sobre el .docx de la plantilla (estilos, cabeceras y pies se conservan).
+
+```bash
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY=sk-ant-...        # obligatorio
+export APP_PASSWORD=una-clave              # opcional: protege el acceso (usuario cualquiera)
+export ANTHROPIC_MODEL=claude-sonnet-5-5   # opcional
+uvicorn webapp.main:app --host 0.0.0.0 --port 8000
+```
+
+Abrir `http://<servidor>:8000`. Los datos (fotos, versiones, plantillas) se guardan en `data/`
+(`INFORMES_DATA_DIR` para cambiarlo). Si se publica en Internet, defina `APP_PASSWORD` y use HTTPS.
+Tests: `python -m pytest tests`. Se envían a Claude hasta 60 fotos reducidas (`MAX_FOTOS_VISTAS`).
+
+---
+
+# Generador de informes de inspección estructural (versión por línea de comandos)
 
 Rutina en Python que:
 

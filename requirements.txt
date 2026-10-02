@@ -1,2 +1,7 @@
 docxtpl>=0.16
 Pillow>=9.0
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
+anthropic>=0.40
+pypdf>=4.0

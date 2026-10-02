@@ -3,3 +3,5 @@ __pycache__/
 ejemplo/
 Informe_*.docx
 config.json
+data/
+.pytest_cache/
