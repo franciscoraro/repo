@@ -5,6 +5,9 @@ let poll = null;
 
 document.getElementById('logo').onclick = () => { clearInterval(poll); inicio(); };
 fetch('/api/estado').then(r => r.json()).then(e => {
+  document.getElementById('logo').title = 'Clave: ' + e.clave + ' · Modelo: ' + e.modelo;
+  if (e.api_key) { const f = document.createElement('div'); f.className = 'hint'; f.style.textAlign = 'center';
+    f.textContent = 'Clave en uso: ' + e.clave + ' · Modelo: ' + e.modelo; document.body.appendChild(f); }
   if (!e.api_key) { const a = document.getElementById('aviso'); a.hidden = false;
     a.textContent = 'Falta configurar ANTHROPIC_API_KEY en el servidor: no se podrán generar informes.'; }
 });

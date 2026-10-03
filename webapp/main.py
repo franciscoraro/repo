@@ -206,7 +206,7 @@ def foto(jid: str, ruta: str):
 
 @app.get("/api/estado")
 def estado():
-    return {"api_key": bool(os.environ.get("ANTHROPIC_API_KEY")), "modelo": llm.MODELO}
+    return {"api_key": bool(llm.clave_api()), "clave": llm.clave_enmascarada(), "modelo": llm.MODELO}
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

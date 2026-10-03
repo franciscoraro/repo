@@ -53,6 +53,16 @@ HERRAMIENTA = {
 }
 
 
+def clave_api() -> str:
+    """Clave de ANTHROPIC_API_KEY sin espacios, saltos de línea ni comillas sobrantes."""
+    return os.environ.get("ANTHROPIC_API_KEY", "").strip().strip("\"'").strip()
+
+
+def clave_enmascarada() -> str:
+    k = clave_api()
+    return f"{k[:12]}…{k[-4:]} ({len(k)} caracteres)" if len(k) > 20 else (f"{len(k)} caracteres" if k else "")
+
+
 def construir_mensaje(*, nombre, instrucciones, estructura, fotos, ejemplo=None, previo=None, feedback=None):
     """fotos: lista de (id, jpeg_bytes | None). Devuelve el contenido del mensaje de usuario."""
     partes = [{"type": "text", "text": f"NOMBRE DEL INFORME: {nombre}\n\nQUÉ DEBE HACER EL INFORME:\n{instrucciones}"}]
@@ -76,7 +86,7 @@ def construir_mensaje(*, nombre, instrucciones, estructura, fotos, ejemplo=None,
 
 def generar_spec(**kw) -> dict:
     contenido = construir_mensaje(**kw)
-    cliente = anthropic.Anthropic()
+    cliente = anthropic.Anthropic(api_key=clave_api() or None)
     with cliente.messages.stream(
         model=MODELO, max_tokens=16000, system=SISTEMA, tools=[HERRAMIENTA],
         tool_choice={"type": "tool", "name": "emitir_informe"},
