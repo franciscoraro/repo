@@ -22,6 +22,7 @@ export ANTHROPIC_MODEL=claude-sonnet-5-5   # opcional
 uvicorn webapp.main:app --host 0.0.0.0 --port 8000
 ```
 
+En Windows basta con hacer doble clic en `iniciar.bat`.
 Abrir `http://<servidor>:8000`. Los datos (fotos, versiones, plantillas) se guardan en `data/`
 (`INFORMES_DATA_DIR` para cambiarlo). Si se publica en Internet, defina `APP_PASSWORD` y use HTTPS.
 Tests: `python -m pytest tests`. Se envían a Claude hasta 60 fotos reducidas (`MAX_FOTOS_VISTAS`).
